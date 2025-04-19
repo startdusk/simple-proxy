@@ -1,0 +1,45 @@
+@baseUrl = http://localhost:3000
+###
+# 健康检查
+GET {{baseUrl}}/health
+
+###
+# 创建用户
+# @name createUser
+POST {{baseUrl}}/users
+Content-Type: application/json
+Accept: application/json
+
+{
+    "name": "测试用户",
+    "email": "test@example.com",
+    "password": "password123"
+}
+
+###
+# 获取所有用户
+GET {{baseUrl}}/users
+
+###
+# 获取单个用户
+@userId = {{createUser.response.body.$.id}}
+GET {{baseUrl}}/users/{{userId}}
+
+###
+# 更新用户
+PUT {{baseUrl}}/users/{{userId}}
+Content-Type: application/json
+Accept: application/json
+
+{
+    "name": "更新后的名字",
+    "email": "updated@example.com"
+}
+
+###
+# 删除用户
+DELETE {{baseUrl}}/users/{{userId}}
+
+###
+# 错误测试 - 不存在的用户
+GET {{baseUrl}}/users/9999

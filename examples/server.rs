@@ -23,6 +23,7 @@ struct User {
     id: u64,
     name: String,
     email: String,
+    #[serde(skip)]
     password: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -208,4 +209,90 @@ async fn delete_user(
 
 async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
     state.health_check()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+
+    fn create_test_state() -> AppState {
+        AppState::new()
+    }
+
+    #[test]
+    fn test_new_app_state() {
+        let state = create_test_state();
+        assert_eq!(state.get_users().len(), 0);
+    }
+
+    #[test]
+    fn test_create_and_get_user() -> anyhow::Result<()> {
+        let state = create_test_state();
+        let user = state.create_user(CreateUserRequest {
+            name: "Test".into(),
+            email: "test@example.com".into(),
+            password: "password".into(),
+        })?;
+
+        assert_eq!(user.name, "Test");
+        assert_eq!(state.get_user(1).unwrap().name, "Test");
+        Ok(())
+    }
+
+    #[test]
+    fn test_update_user() {
+        let state = create_test_state();
+        let user = state
+            .create_user(CreateUserRequest {
+                name: "Original".into(),
+                email: "original@test.com".into(),
+                password: "pass".into(),
+            })
+            .unwrap();
+
+        let updated = state
+            .update_user(
+                1,
+                UpdateUserRequest {
+                    name: Some("Updated".into()),
+                    email: None,
+                    password: None,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(updated.name, "Updated");
+        assert_ne!(updated.updated_at, user.updated_at);
+    }
+
+    #[test]
+    fn test_delete_user() {
+        let state = create_test_state();
+        state
+            .create_user(CreateUserRequest {
+                name: "ToDelete".into(),
+                email: "delete@test.com".into(),
+                password: "pass".into(),
+            })
+            .unwrap();
+
+        assert!(state.delete_user(1).is_some());
+        assert!(state.get_user(1).is_none());
+    }
+
+    #[test]
+    fn test_health_check() {
+        let state = create_test_state();
+        let result = state.health_check();
+        assert_eq!(result.0["status"], Value::String("ok".into()));
+    }
+
+    #[test]
+    fn test_password_hashing() {
+        let state = create_test_state();
+        let hash = hash_password(&state.inner.argon2, "password").unwrap();
+        assert!(hash.starts_with("$argon2"));
+        assert_ne!(hash, "password");
+    }
 }
