@@ -63,6 +63,8 @@ This project will use the following dependencies:
 - tokio 1.44, features = ["macros", "rt-multi-thread"]
 - rand 0.8
 - anyhow 1.0
+- tracing 0.1
+- tracing-subscriber 0.3
 
 ### Argon2
 

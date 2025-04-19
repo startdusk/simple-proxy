@@ -15,3 +15,5 @@ chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1.44", features = ["macros", "rt-multi-thread"] }
 rand = "0.8.0"
 anyhow = "1.0.97"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
