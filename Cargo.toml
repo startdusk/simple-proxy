@@ -11,6 +11,7 @@ tokio = { version = "1.44", features = ["macros", "rt-multi-thread"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 anyhow = "1.0.97"
+pingora = { version = "0.4.0", features = ["lb", "rustls"] }
 
 
 
@@ -21,3 +22,9 @@ serde_json = "1.0"
 dashmap = "6.1"
 argon2 = "0.5"
 rand = "0.8.0"
+
+# 20250419: 由于pingora 0.4.0没有锁sfv版本，导致使用pingora的时候sfv自动更新，导致代码pingora依赖的sfv版本和cargo.toml中的sfv版本不一致，导致编译失败
+# 解决方法：在cargo.toml中添加sfv的版本，并且使用git的方式引入sfv，这样就可以保证sfv的版本一致了, 并在项目中删除Cargo.lock文件, 然后重新构建项目
+# 参考：https://github.com/cloudflare/pingora/issues/568#issuecomment-2755031755
+[patch.crates-io]
+sfv = { git = "https://github.com/undef1nd/sfv.git", tag = "v0.9.4" }
