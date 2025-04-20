@@ -1,5 +1,5 @@
 [package]
-name = "template"
+name = "simple-proxy"
 version = "0.1.0"
 edition = "2024"
 
@@ -12,16 +12,18 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 anyhow = "1.0.97"
 pingora = { version = "0.4.0", features = ["lb", "rustls"] }
+async-trait = "0.1.88"
 
 
 
 [dev-dependencies]
 chrono = { version = "0.4", features = ["serde"] }
-axum = "0.8"
+axum = { version = "0.8", features = ["http2"] }
 serde_json = "1.0"
 dashmap = "6.1"
 argon2 = "0.5"
 rand = "0.8.0"
+tower-http = { version = "0.6.2", features = ["trace"] }
 
 # 20250419: 由于pingora 0.4.0没有锁sfv版本，导致使用pingora的时候sfv自动更新，导致代码pingora依赖的sfv版本和cargo.toml中的sfv版本不一致，导致编译失败
 # 解决方法：在cargo.toml中添加sfv的版本，并且使用git的方式引入sfv，这样就可以保证sfv的版本一致了, 并在项目中删除Cargo.lock文件, 然后重新构建项目

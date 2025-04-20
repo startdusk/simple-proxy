@@ -6,7 +6,7 @@ use argon2::{
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http::StatusCode,
+    http::{Request, Response, StatusCode},
     response::IntoResponse,
     routing::get,
 };
@@ -14,9 +14,13 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::{net::SocketAddr, sync::Arc};
-use tracing::info;
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
+use tower_http::trace::TraceLayer;
+use tracing::{Span, info};
 
 #[derive(Debug, Serialize, Clone)]
 struct User {
@@ -129,9 +133,7 @@ struct UpdateUserRequest {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .init();
+    tracing_subscriber::fmt().init();
     let app_state = AppState::new();
 
     let app = Router::new()
@@ -141,7 +143,16 @@ async fn main() -> anyhow::Result<()> {
             get(get_user).put(update_user).delete(delete_user),
         )
         .route("/health", get(health_check))
-        .with_state(app_state);
+        .with_state(app_state)
+        .layer(
+            TraceLayer::new_for_http()
+                .on_request(|request: &Request<_>, _span: &Span| {
+                    info!("Request headers: {:?}", request.headers());
+                })
+                .on_response(|response: &Response<_>, _latency: Duration, _span: &Span| {
+                    info!("Response headers: {:?}", response.headers());
+                }),
+        );
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
