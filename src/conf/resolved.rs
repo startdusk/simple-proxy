@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
+use rand::rngs::OsRng;
+use rand::seq::SliceRandom;
 use std::convert::TryFrom;
 use std::{collections::HashMap, fs::read_to_string};
 
-use super::{CertConfig, GlobalConfig, SimpleProxyConfig, TlsConfig, UpstreamConfig};
+use super::raw::{CertConfig, GlobalConfig, SimpleProxyConfig, TlsConfig, UpstreamConfig};
 
 #[derive(Debug, Clone)]
 pub struct ProxyConfigResolved {
@@ -112,6 +114,13 @@ impl TryFrom<SimpleProxyConfig> for ProxyConfigResolved {
         }
 
         Ok(Self { global, servers })
+    }
+}
+
+impl ServerConfigResolved {
+    pub fn choose(&self) -> Option<&str> {
+        let upstream = self.upstream.servers.choose(&mut OsRng);
+        upstream.map(|s| s.as_str())
     }
 }
 

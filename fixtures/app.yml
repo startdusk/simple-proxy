@@ -1,20 +1,9 @@
 # Global configurations
 global:
-  port: 8080
+  port: 80
   # could be empty for no tls or specify cert name
   tls: proxy_cert
 
-# Certificates to be used by the proxy
-certs:
-  - name: proxy_cert
-    cert_path: ./proxy/cert.pem
-    key_path: ./proxy/key.pem
-  - name: web_cert
-    cert_path: ./web/cert.pem
-    key_path: ./web/key.pem
-  - name: api_cert
-    cert_path: ./api/cert.pem
-    key_path: ./api/key.pem
 
 # Servers configurations
 servers:
@@ -29,12 +18,11 @@ servers:
     tls: ~
 
 upstreams:
-  - name: web_servers
+  - name: api_servers
     servers:
       - 127.0.0.1:3001
       - 127.0.0.1:3002
-
-  - name: api_servers
+  - name: web_servers
     servers:
       - 127.0.0.1:3003
       - 127.0.0.1:3004

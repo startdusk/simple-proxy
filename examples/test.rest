@@ -1,7 +1,6 @@
-# 源API地址
-@sourceUrl = http://localhost:3000
+
 # 反向代理地址
-@reverseUrl = http://localhost:8080
+@reverseUrl = http://api.acme.com:8080
 @baseUrl = {{reverseUrl}}
 ###
 # 健康检查

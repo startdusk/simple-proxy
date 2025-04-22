@@ -22,6 +22,15 @@ use std::{
 use tower_http::trace::TraceLayer;
 use tracing::{Span, info};
 
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    #[arg(short, long, default_value_t = 3001)]
+    port: u16,
+}
+
 #[derive(Debug, Serialize, Clone)]
 struct User {
     id: u64,
@@ -134,6 +143,7 @@ struct UpdateUserRequest {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
+    let args = Args::parse();
     let app_state = AppState::new();
 
     let app = Router::new()
@@ -154,7 +164,7 @@ async fn main() -> anyhow::Result<()> {
                 }),
         );
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     info!("Listening on http://{}", addr);
     axum::serve(listener, app).await?;

@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn test_load_sample_config() -> Result<()> {
-        let config = SimpleProxyConfig::from_yaml_file("fixtures/sample.yaml")?;
+        let config = SimpleProxyConfig::from_yaml_file("fixtures/sample.yml")?;
 
         // Verify global settings
         assert_eq!(config.global.port, 8080);
@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn test_config_roundtrip() -> Result<()> {
-        let original = SimpleProxyConfig::from_yaml_file("fixtures/sample.yaml")?;
+        let original = SimpleProxyConfig::from_yaml_file("fixtures/sample.yml")?;
         let yaml = serde_yaml::to_string(&original)?;
         let reloaded: SimpleProxyConfig = serde_yaml::from_str(&yaml)?;
 

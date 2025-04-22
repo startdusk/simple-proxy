@@ -1,26 +1,87 @@
+pub mod conf;
+
 use async_trait::async_trait;
+use axum::http::{self, StatusCode};
+use conf::ProxyConfig;
 use pingora::{http::ResponseHeader, prelude::*};
 use tracing::{info, warn};
 
-pub mod config;
+pub struct SimpleProxy {
+    pub(crate) config: ProxyConfig,
+}
 
-pub struct SimpleProxy {}
+impl SimpleProxy {
+    pub fn new(config: ProxyConfig) -> Self {
+        Self { config }
+    }
+
+    pub fn config(&self) -> &ProxyConfig {
+        &self.config
+    }
+}
+
+#[allow(unused)]
+pub struct ProxyContext {
+    pub(crate) config: ProxyConfig,
+}
 
 // 最新版本的Rust已经可以不需要async_trait了
 // 但是Pingora当前版本依赖了async_trait
 // 所以这里需要使用async_trait
 #[async_trait]
 impl ProxyHttp for SimpleProxy {
-    type CTX = ();
+    type CTX = ProxyContext;
 
-    fn new_ctx(&self) -> Self::CTX {}
+    fn new_ctx(&self) -> Self::CTX {
+        ProxyContext {
+            config: self.config.clone(),
+        }
+    }
 
     async fn upstream_peer(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         _ctx: &mut Self::CTX,
     ) -> Result<Box<HttpPeer>> {
-        let peer = HttpPeer::new("127.0.0.1:3000", false, "localhost".to_string());
+        let config = self.config.load();
+        let Some(host) = session
+            .get_header(http::header::HOST)
+            .and_then(|h| h.to_str().ok())
+            .map(|h| {
+                // remove port if exists
+                h.split(':').next().unwrap_or(h)
+            })
+        else {
+            // return 404 if host is not found
+            return Err(Error::create(
+                ErrorType::CustomCode("No valid host found", StatusCode::BAD_REQUEST.into()),
+                ErrorSource::Downstream,
+                None,
+                None,
+            ));
+        };
+
+        let Some(server) = config.servers.get(host) else {
+            // return 404 if host is not found
+            return Err(Error::create(
+                ErrorType::HTTPStatus(StatusCode::NOT_FOUND.into()),
+                ErrorSource::Upstream,
+                None,
+                None,
+            ));
+        };
+
+        let Some(upstream) = server.choose() else {
+            // return 503 if no upstream is available
+            return Err(Error::create(
+                ErrorType::HTTPStatus(StatusCode::SERVICE_UNAVAILABLE.into()),
+                ErrorSource::Upstream,
+                None,
+                None,
+            ));
+        };
+
+        let peer = HttpPeer::new(upstream, false, host.to_string());
         info!("upstream peer: {}", peer);
         Ok(Box::new(peer))
     }
