@@ -2,6 +2,8 @@ use async_trait::async_trait;
 use pingora::{http::ResponseHeader, prelude::*};
 use tracing::{info, warn};
 
+pub mod config;
+
 pub struct SimpleProxy {}
 
 // 最新版本的Rust已经可以不需要async_trait了
