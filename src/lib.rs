@@ -2,8 +2,8 @@ pub mod conf;
 
 use async_trait::async_trait;
 use axum::http::{self, StatusCode};
-use conf::ProxyConfig;
-use pingora::{http::ResponseHeader, prelude::*};
+use conf::{ProxyConfig, ProxyConfigResolved};
+use pingora::{http::ResponseHeader, prelude::*, protocols::http::server, upstreams::peer::Peer};
 use tracing::{info, warn};
 
 pub struct SimpleProxy {
@@ -11,8 +11,10 @@ pub struct SimpleProxy {
 }
 
 impl SimpleProxy {
-    pub fn new(config: ProxyConfig) -> Self {
-        Self { config }
+    pub fn new(config: ProxyConfigResolved) -> Self {
+        Self {
+            config: ProxyConfig::new(config),
+        }
     }
 
     pub fn config(&self) -> &ProxyConfig {
@@ -41,17 +43,21 @@ impl ProxyHttp for SimpleProxy {
     async fn upstream_peer(
         &self,
         session: &mut Session,
-        _ctx: &mut Self::CTX,
+        ctx: &mut Self::CTX,
     ) -> Result<Box<HttpPeer>> {
-        let config = self.config.load();
-        let Some(host) = session
-            .get_header(http::header::HOST)
-            .and_then(|h| h.to_str().ok())
-            .map(|h| {
-                // remove port if exists
-                h.split(':').next().unwrap_or(h)
-            })
-        else {
+        let config = ctx.config.load();
+        let host = match session.downstream_session.as_ref() {
+            server::Session::H1(s) => {
+                s.get_header(http::header::HOST)
+                    .and_then(|h| h.to_str().ok())
+                    .map(|h| {
+                        // remove port if exists
+                        h.split(':').next().unwrap_or(h)
+                    })
+            }
+            server::Session::H2(s) => s.req_header().uri.host(),
+        };
+        let Some(host) = host else {
             // return 404 if host is not found
             return Err(Error::create(
                 ErrorType::CustomCode("No valid host found", StatusCode::BAD_REQUEST.into()),
@@ -81,7 +87,10 @@ impl ProxyHttp for SimpleProxy {
             ));
         };
 
-        let peer = HttpPeer::new(upstream, false, host.to_string());
+        let mut peer = HttpPeer::new(upstream, server.tls, host.to_string());
+        if let Some(options) = peer.get_mut_peer_options() {
+            options.set_http_version(2, 2); // 启用 HTTP/2
+        }
         info!("upstream peer: {}", peer);
         Ok(Box::new(peer))
     }

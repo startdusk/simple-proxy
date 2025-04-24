@@ -1,7 +1,11 @@
 use std::path::PathBuf;
 
-use pingora::{proxy::http_proxy_service, server::Server};
-use simple_proxy::{SimpleProxy, conf::ProxyConfig};
+use pingora::{
+    listeners::tls::TlsSettings,
+    proxy::http_proxy_service,
+    server::{Server, configuration::ServerConf},
+};
+use simple_proxy::{SimpleProxy, conf::ProxyConfigResolved};
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -22,16 +26,42 @@ fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
 
-    let mut server = Server::new(None)?;
-    server.bootstrap();
-    let config = ProxyConfig::load_from_file(args.config)?;
-    let sp = SimpleProxy::new(config);
-    let port = sp.config().load().global.port;
-    let proxy_addr = format!("0.0.0.0:{}", port);
-    let mut proxy = http_proxy_service(&server.configuration, sp);
-    proxy.add_tcp(&proxy_addr);
+    let config = ProxyConfigResolved::load(&args.config)?;
+    let tls_settings = {
+        match config.global.tls.as_ref() {
+            Some(tls) => {
+                let mut tls_settings = TlsSettings::intermediate(&tls.cert, &tls.key)?;
+                tls_settings.enable_h2(); // 启用 HTTP/2
+                info!("tls settings enabled HTTP/2");
+                Some(tls_settings)
+            }
+            None => None,
+        }
+    };
 
-    info!("proxy listening on {}", proxy_addr);
+    let proxy_addr = format!("0.0.0.0:{}", config.global.port);
+    let conf = {
+        let ca_file = config.global.tls.as_ref().and_then(|tls| tls.ca.clone());
+        ServerConf {
+            ca_file,
+            ..Default::default()
+        }
+    };
+    let mut server = Server::new_with_opt_and_conf(None, conf);
+    server.bootstrap();
+
+    let sp = SimpleProxy::new(config);
+    let mut proxy = http_proxy_service(&server.configuration, sp);
+    match tls_settings {
+        Some(tls_settings) => {
+            info!("proxy listening on {} with TLS", proxy_addr);
+            proxy.add_tls_with_settings(&proxy_addr, None, tls_settings);
+        }
+        None => {
+            info!("proxy listening on {} without TLS", proxy_addr);
+            proxy.add_tcp(&proxy_addr);
+        }
+    }
 
     server.add_service(proxy);
     server.run_forever();

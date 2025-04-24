@@ -1,9 +1,11 @@
 # Global configurations
 global:
-  port: 80
+  port: 443
   # could be empty for no tls or specify cert name
-  tls: proxy_cert
-
+  tls:
+    ca: ./fixtures/certs/ca.crt
+    cert: ./fixtures/certs/wildcard.acme.com.crt
+    key: ./fixtures/certs/wildcard.acme.com.key
 
 # Servers configurations
 servers:
@@ -11,11 +13,11 @@ servers:
       - acme.com
       - www.acme.com
     upstream: web_servers
-    tls: web_cert
+    tls: false
   - server_name:
       - api.acme.com
     upstream: api_servers
-    tls: ~
+    tls: true
 
 upstreams:
   - name: api_servers

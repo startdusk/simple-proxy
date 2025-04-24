@@ -1,6 +1,6 @@
 
 # 反向代理地址
-@reverseUrl = http://api.acme.com:8080
+@reverseUrl = https://api.acme.com
 @baseUrl = {{reverseUrl}}
 ###
 # 健康检查

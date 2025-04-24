@@ -1,10 +1,10 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use rand::rngs::OsRng;
 use rand::seq::SliceRandom;
 use std::convert::TryFrom;
-use std::{collections::HashMap, fs::read_to_string};
+use std::{collections::HashMap, path::Path};
 
-use super::raw::{CertConfig, GlobalConfig, SimpleProxyConfig, TlsConfig, UpstreamConfig};
+use super::raw::{GlobalConfig, ServerConfig, SimpleProxyConfig, TlsConfig, UpstreamConfig};
 
 #[derive(Debug, Clone)]
 pub struct ProxyConfigResolved {
@@ -15,18 +15,19 @@ pub struct ProxyConfigResolved {
 #[derive(Debug, Clone)]
 pub struct GlobalConfigResolved {
     pub port: u16,
-    pub tls: Option<CertConfigResolved>,
+    pub tls: Option<TlsConfigResolved>,
 }
 
 #[derive(Debug, Clone)]
-pub struct CertConfigResolved {
+pub struct TlsConfigResolved {
     pub cert: String,
     pub key: String,
+    pub ca: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ServerConfigResolved {
-    pub tls: Option<CertConfigResolved>,
+    pub tls: bool,
     pub upstream: UpstreamConfigResolved,
 }
 
@@ -39,22 +40,48 @@ impl TryFrom<&GlobalConfig> for GlobalConfigResolved {
     type Error = anyhow::Error;
 
     fn try_from(raw: &GlobalConfig) -> Result<Self> {
+        let tls = raw
+            .tls
+            .as_ref()
+            .map(TlsConfigResolved::try_from)
+            .transpose()?;
         Ok(Self {
             port: raw.port,
-            tls: None, // Will be resolved in parent context
+            tls,
         })
     }
 }
 
-impl TryFrom<&CertConfig> for CertConfigResolved {
+impl TryFrom<&TlsConfig> for TlsConfigResolved {
     type Error = anyhow::Error;
 
-    fn try_from(raw: &CertConfig) -> Result<Self> {
+    fn try_from(raw: &TlsConfig) -> Result<Self> {
+        // Add error context for better diagnostics
+        let cert_path = raw.cert.as_path();
+        let key_path = raw.key.as_path();
+
+        cert_path
+            .exists()
+            .then_some(())
+            .with_context(|| format!("Certificate file not found: {}", cert_path.display()))?;
+
+        key_path
+            .exists()
+            .then_some(())
+            .with_context(|| format!("Private key file not found: {}", key_path.display()))?;
+
+        let ca = if let Some(ca_path) = &raw.ca {
+            if !ca_path.exists() {
+                return Err(anyhow::anyhow!("CA file not found: {:?}", ca_path));
+            }
+            Some(ca_path.to_string_lossy().to_string())
+        } else {
+            None
+        };
         Ok(Self {
-            cert: read_to_string(&raw.cert_path)
-                .with_context(|| format!("Failed to read cert: {:?}", raw.cert_path))?,
-            key: read_to_string(&raw.key_path)
-                .with_context(|| format!("Failed to read key: {:?}", raw.key_path))?,
+            cert: cert_path.to_string_lossy().to_string(),
+            key: key_path.to_string_lossy().to_string(),
+            ca,
         })
     }
 }
@@ -67,23 +94,19 @@ impl From<&UpstreamConfig> for UpstreamConfigResolved {
     }
 }
 
+impl ProxyConfigResolved {
+    pub fn load(file: impl AsRef<Path>) -> Result<Self> {
+        let raw = SimpleProxyConfig::from_yaml_file(file)?;
+        let config: ProxyConfigResolved = raw.try_into()?;
+        Ok(config)
+    }
+}
+
 impl TryFrom<SimpleProxyConfig> for ProxyConfigResolved {
     type Error = anyhow::Error;
 
     fn try_from(raw: SimpleProxyConfig) -> Result<Self> {
-        let mut cert_map = HashMap::new();
-        for cert in &raw.certs {
-            cert_map.insert(cert.name.clone(), CertConfigResolved::try_from(cert)?);
-        }
-
-        let global = GlobalConfigResolved {
-            port: raw.global.port,
-            tls: match &raw.global.tls {
-                Some(TlsConfig::Enabled(name)) => cert_map.get(name).cloned(),
-                _ => None,
-            },
-        };
-
+        let global = GlobalConfigResolved::try_from(&raw.global)?;
         let upstream_map: HashMap<_, _> = raw
             .upstreams
             .iter()
@@ -91,25 +114,14 @@ impl TryFrom<SimpleProxyConfig> for ProxyConfigResolved {
             .collect();
 
         let mut servers = HashMap::new();
-        for server in &raw.servers {
-            let server_tls = match &server.tls {
-                Some(super::raw::ServerTls::Cert(name)) => cert_map.get(name).cloned(),
-                _ => None,
-            };
+        for server in raw.servers {
+            let resolved_server = ServerConfigResolved::try_from_with_maps(&server, &upstream_map)?;
 
-            let upstream = upstream_map
-                .get(&server.upstream)
-                .with_context(|| format!("Upstream {} not found", server.upstream))?
-                .clone();
-
-            for host in &server.server_name {
-                servers.insert(
-                    host.clone(),
-                    ServerConfigResolved {
-                        tls: server_tls.clone(),
-                        upstream: upstream.clone(),
-                    },
-                );
+            for server_name in server.server_name {
+                if servers.contains_key(&server_name) {
+                    return Err(anyhow!("Duplicate server name: {}", server_name));
+                }
+                servers.insert(server_name, resolved_server.clone());
             }
         }
 
@@ -118,6 +130,23 @@ impl TryFrom<SimpleProxyConfig> for ProxyConfigResolved {
 }
 
 impl ServerConfigResolved {
+    fn try_from_with_maps(
+        server: &ServerConfig,
+        upstream_map: &HashMap<String, UpstreamConfigResolved>,
+    ) -> Result<Self> {
+        // Get the tls setting, default to false if not specified
+        let tls = server.tls.unwrap_or(false);
+
+        // Get the upstream configuration
+        let upstream_name = &server.upstream;
+        let upstream = upstream_map
+            .get(upstream_name)
+            .ok_or_else(|| anyhow!("Upstream '{}' not found", upstream_name))?
+            .clone();
+
+        Ok(ServerConfigResolved { tls, upstream })
+    }
+
     pub fn choose(&self) -> Option<&str> {
         let upstream = self.upstream.servers.choose(&mut OsRng);
         upstream.map(|s| s.as_str())
@@ -194,9 +223,6 @@ upstreams:
 
         // Verify server config
         let server = resolved.servers.get("acme.com").unwrap();
-        let server_cert = server.tls.as_ref().unwrap();
-        assert_eq!(server_cert.cert, "test_cert");
-        assert_eq!(server_cert.key, "test_key");
         assert_eq!(server.upstream.servers, vec!["127.0.0.1:3001"]);
 
         Ok(())

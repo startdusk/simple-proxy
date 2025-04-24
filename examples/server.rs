@@ -10,6 +10,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
+use axum_server::tls_rustls::RustlsConfig;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use rand::rngs::OsRng;
@@ -164,10 +165,17 @@ async fn main() -> anyhow::Result<()> {
                 }),
         );
 
+    let config = RustlsConfig::from_pem_file(
+        "./fixtures/certs/api.acme.com.crt",
+        "./fixtures/certs/api.acme.com.key",
+    )
+    .await?;
+
     let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    info!("Listening on http://{}", addr);
-    axum::serve(listener, app).await?;
+    info!("Listening on https://{}", addr);
+    axum_server::bind_rustls(addr, config)
+        .serve(app.into_make_service())
+        .await?;
     Ok(())
 }
 

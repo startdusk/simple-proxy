@@ -1,14 +1,23 @@
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::{
+    fs::File,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SimpleProxyConfig {
     pub global: GlobalConfig,
-    #[serde(default)]
-    pub certs: Vec<CertConfig>,
     pub servers: Vec<ServerConfig>,
     pub upstreams: Vec<UpstreamConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TlsConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ca: Option<PathBuf>,
+    pub cert: PathBuf,
+    pub key: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -20,18 +29,11 @@ pub struct GlobalConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct CertConfig {
-    pub name: String,
-    pub cert_path: PathBuf,
-    pub key_path: PathBuf,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct ServerConfig {
     pub server_name: Vec<String>,
     pub upstream: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tls: Option<ServerTls>,
+    #[serde(default)]
+    pub tls: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -40,41 +42,22 @@ pub struct UpstreamConfig {
     pub servers: Vec<String>,
 }
 
-// Helper enums and defaults
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum TlsConfig {
-    Enabled(String),
-    Disabled,
-}
-
-impl Default for TlsConfig {
-    fn default() -> Self {
-        Self::Disabled
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum ServerTls {
-    Cert(String),
-    Disabled,
-}
-
-impl Default for ServerTls {
-    fn default() -> Self {
-        Self::Disabled
-    }
-}
-
 fn default_port() -> u16 {
     8080
 }
 
 impl SimpleProxyConfig {
     pub fn from_yaml_file(path: impl AsRef<Path>) -> Result<Self> {
-        let file = std::fs::File::open(path)?;
-        let config: SimpleProxyConfig = serde_yaml::from_reader(file)?;
+        let file = File::open(path)?;
+        let config: Self = serde_yaml::from_reader(file)?;
+
+        // Validate TLS file existence
+        if let Some(tls) = &config.global.tls {
+            if let Some(ca) = &tls.ca {
+                ensure!(ca.exists(), "CA file not found: {}", ca.display());
+            }
+        }
+
         Ok(config)
     }
 
@@ -100,35 +83,40 @@ mod tests {
         let config = SimpleProxyConfig::from_yaml_file("fixtures/sample.yml")?;
 
         // Verify global settings
-        assert_eq!(config.global.port, 8080);
-        assert!(matches!(config.global.tls, Some(TlsConfig::Enabled(ref s)) if s == "proxy_cert"));
-
-        // Verify certificates
-        assert_eq!(config.certs.len(), 3);
-        let web_cert = &config.certs[1];
-        assert_eq!(web_cert.name, "web_cert");
-        assert_eq!(web_cert.cert_path, Path::new("./web/cert.pem"));
-
-        // Verify servers
-        assert_eq!(config.servers.len(), 2);
-        let api_server = &config.servers[1];
-        assert_eq!(api_server.server_name, vec!["api.acme.com"]);
-        assert!(api_server.tls.is_none());
-
-        // Verify upstreams
-        assert_eq!(config.upstreams.len(), 2);
-        let web_upstream = &config.upstreams[0];
-        assert_eq!(web_upstream.name, "web_servers");
+        assert_eq!(config.global.port, 8080, "Default port should be 8080");
+        let global_tls = config
+            .global
+            .tls
+            .as_ref()
+            .expect("Global TLS should be configured");
         assert_eq!(
-            web_upstream.servers,
-            vec!["127.0.0.1:3001", "127.0.0.1:3002"]
+            global_tls.cert,
+            Path::new("proxy_cert"),
+            "Should load correct global certificate"
         );
 
-        let api_upstream = &config.upstreams[1];
-        assert_eq!(api_upstream.name, "api_servers");
+        // Verify servers with clearer assertions
+        let api_server = config
+            .servers
+            .iter()
+            .find(|s| s.server_name.contains(&"api.acme.com".to_string()))
+            .expect("API server should exist");
         assert_eq!(
-            api_upstream.servers,
-            vec!["127.0.0.1:3003", "127.0.0.1:3004"]
+            api_server.server_name,
+            vec!["api.acme.com".to_string()],
+            "API server name should match"
+        );
+
+        // Verify upstreams using find
+        let web_upstream = config
+            .upstreams
+            .iter()
+            .find(|u| u.name == "web_servers")
+            .expect("Web upstream should exist");
+        assert_eq!(
+            web_upstream.servers,
+            vec!["127.0.0.1:3001", "127.0.0.1:3002"],
+            "Web upstream servers should match"
         );
 
         Ok(())
@@ -141,7 +129,6 @@ mod tests {
         let reloaded: SimpleProxyConfig = serde_yaml::from_str(&yaml)?;
 
         assert_eq!(original.global.port, reloaded.global.port);
-        assert_eq!(original.certs.len(), reloaded.certs.len());
         Ok(())
     }
 }

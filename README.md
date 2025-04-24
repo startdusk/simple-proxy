@@ -1,5 +1,7 @@
 # Simple Reverse Proxy with Pingora
 
+[English Document](README.md) | [中文文档](README.zh-CN.md)
+
 A high-performance HTTP/HTTPS proxy built with Cloudflare's [Pingora](https://github.com/cloudflare/pingora), forwarding requests to an example Axum web server.
 
 ## Features

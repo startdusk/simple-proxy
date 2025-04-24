@@ -5,7 +5,6 @@ use std::{ops::Deref, path::Path, sync::Arc};
 
 use anyhow::Result;
 use arc_swap::ArcSwap;
-use raw::SimpleProxyConfig;
 pub use resolved::*;
 
 #[derive(Debug, Clone)]
@@ -17,8 +16,7 @@ impl ProxyConfig {
     }
 
     pub fn load_from_file(file: impl AsRef<Path>) -> Result<Self> {
-        let raw = SimpleProxyConfig::from_yaml_file(file)?;
-        let config: ProxyConfigResolved = raw.try_into()?;
+        let config = ProxyConfigResolved::load(file)?;
         Ok(Self::new(config))
     }
 
