@@ -18,6 +18,8 @@ arc-swap = "1.7.1"
 axum = { version = "0.8", features = ["http2"] }
 rand = "0.8.0"
 clap = { version = "4.5.37", features = ["derive"] }
+bytes = "1.10.1"
+pingora-cache = "0.4.0"
 
 
 
