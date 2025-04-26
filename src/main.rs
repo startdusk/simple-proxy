@@ -5,7 +5,7 @@ use pingora::{
     proxy::http_proxy_service,
     server::{Server, configuration::ServerConf},
 };
-use simple_proxy::{SimpleProxy, conf::ProxyConfigResolved};
+use simple_proxy::{HealthService, SimpleProxy, conf::ProxyConfigResolved};
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -50,7 +50,8 @@ fn main() -> anyhow::Result<()> {
     let mut server = Server::new_with_opt_and_conf(None, conf);
     server.bootstrap();
 
-    let sp = SimpleProxy::new(config);
+    let sp = SimpleProxy::try_new(config)?;
+    let health_service = HealthService::new(sp.route_table().clone());
     let mut proxy = http_proxy_service(&server.configuration, sp);
     match tls_settings {
         Some(tls_settings) => {
@@ -64,5 +65,6 @@ fn main() -> anyhow::Result<()> {
     }
 
     server.add_service(proxy);
+    server.add_service(health_service);
     server.run_forever();
 }

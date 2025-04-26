@@ -68,4 +68,4 @@
 
 .PHONY: health
 health:
-	@curl -k -v -X GET https://api.acme.com/health --http2 -H "Content-Type: application/json"
+	@curl -k -X GET https://api.acme.com/health --http2 -H "Content-Type: application/json"
