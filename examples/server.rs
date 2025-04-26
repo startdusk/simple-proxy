@@ -5,9 +5,10 @@ use argon2::{
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
-    http::{Request, Response, StatusCode},
-    response::IntoResponse,
+    extract::{Path, Request, State},
+    http::{self, HeaderValue, StatusCode},
+    middleware::{Next, from_fn_with_state},
+    response::{self, IntoResponse},
     routing::get,
 };
 use axum_server::tls_rustls::RustlsConfig;
@@ -47,6 +48,7 @@ struct AppStateInner {
     next_id: AtomicU64,
     users: DashMap<u64, User>,
     argon2: Argon2<'static>,
+    addr: SocketAddr,
 }
 
 #[derive(Clone)]
@@ -55,12 +57,13 @@ struct AppState {
 }
 
 impl AppState {
-    fn new() -> Self {
+    fn new(addr: impl Into<SocketAddr>) -> Self {
         AppState {
             inner: Arc::new(AppStateInner {
                 next_id: AtomicU64::new(1),
                 users: DashMap::new(),
                 argon2: Argon2::default(),
+                addr: addr.into(),
             }),
         }
     }
@@ -141,11 +144,25 @@ struct UpdateUserRequest {
     password: Option<String>,
 }
 
+async fn server_info(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> response::Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        "X-Server-Info",
+        HeaderValue::from_str(&format!("{}", state.inner.addr)).unwrap(),
+    );
+    response
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
     let args = Args::parse();
-    let app_state = AppState::new();
+    let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
+    let app_state = AppState::new(addr);
 
     let app = Router::new()
         .route("/users", get(get_users).post(create_user))
@@ -154,15 +171,18 @@ async fn main() -> anyhow::Result<()> {
             get(get_user).put(update_user).delete(delete_user),
         )
         .route("/health", get(health_check))
+        .route_layer(from_fn_with_state(app_state.clone(), server_info))
         .with_state(app_state)
         .layer(
             TraceLayer::new_for_http()
                 .on_request(|request: &Request<_>, _span: &Span| {
                     info!("Request headers: {:?}", request.headers());
                 })
-                .on_response(|response: &Response<_>, _latency: Duration, _span: &Span| {
-                    info!("Response headers: {:?}", response.headers());
-                }),
+                .on_response(
+                    |response: &http::Response<_>, _latency: Duration, _span: &Span| {
+                        info!("Response headers: {:?}", response.headers());
+                    },
+                ),
         );
 
     let config = RustlsConfig::from_pem_file(
@@ -171,7 +191,6 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
     info!("Listening on https://{}", addr);
     axum_server::bind_rustls(addr, config)
         .serve(app.into_make_service())
@@ -246,7 +265,8 @@ mod tests {
     use serde_json::Value;
 
     fn create_test_state() -> AppState {
-        AppState::new()
+        let addr = SocketAddr::from(([127, 0, 0, 1], 3001));
+        AppState::new(addr)
     }
 
     #[test]
