@@ -156,74 +156,57 @@ impl ServerConfigResolved {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::{self, File};
-    use std::io::Write;
-    use std::path::PathBuf;
-    use tempfile::tempdir;
 
     #[test]
     fn test_resolved_conversion() -> Result<()> {
-        // Create test certificates
-        let temp_dir = tempdir()?;
-        let create_cert = |dir: &str| -> Result<(PathBuf, PathBuf)> {
-            let cert_dir = temp_dir.path().join(dir);
-            fs::create_dir_all(&cert_dir)?;
-
-            let cert_path = cert_dir.join("cert.pem");
-            let key_path = cert_dir.join("key.pem");
-
-            let mut cert_file = File::create(&cert_path)?;
-            cert_file.write_all(b"test_cert")?;
-
-            let mut key_file = File::create(&key_path)?;
-            key_file.write_all(b"test_key")?;
-
-            Ok((cert_path, key_path))
-        };
-
-        let (proxy_cert, proxy_key) = create_cert("proxy")?;
-        let (web_cert, web_key) = create_cert("web")?;
-
         // Create test config YAML
-        let yaml_content = format!(
-            r#"
+        let yaml_content = r#"
 global:
   port: 8080
-  tls: proxy_cert
-certs:
-  - name: proxy_cert
-    cert_path: {}
-    key_path: {}
-  - name: web_cert
-    cert_path: {}
-    key_path: {}
+  tls: ~
+
 servers:
-  - server_name: [acme.com]
+  - server_name: [acme.com, www.acme.com]
     upstream: web_servers
-    tls: web_cert
+    tls: false
+  - server_name: [api.acme.com]
+    upstream: api_servers
+    tls: true
+
 upstreams:
+  - name: api_servers
+    servers: [127.0.0.1:3001, 127.0.0.1:3002]
   - name: web_servers
-    servers: [127.0.0.1:3001]
-"#,
-            proxy_cert.display(),
-            proxy_key.display(),
-            web_cert.display(),
-            web_key.display()
-        );
+    servers: [127.0.0.1:3003, 127.0.0.1:3004]
+"#;
 
         // Test conversion
-        let raw = SimpleProxyConfig::from_yaml_str(&yaml_content)?;
+        let raw = SimpleProxyConfig::from_yaml_str(yaml_content)?;
         let resolved = ProxyConfigResolved::try_from(raw)?;
 
         // Verify global config
         assert_eq!(resolved.global.port, 8080);
-        let global_cert = resolved.global.tls.unwrap();
-        assert_eq!(global_cert.cert, "test_cert");
-        assert_eq!(global_cert.key, "test_key");
+        assert!(
+            resolved.global.tls.is_none(),
+            "Global TLS should be unconfigured"
+        );
 
-        // Verify server config
-        let server = resolved.servers.get("acme.com").unwrap();
-        assert_eq!(server.upstream.servers, vec!["127.0.0.1:3001"]);
+        // Verify servers
+        let web_server = resolved.servers.get("www.acme.com").unwrap();
+        assert!(!web_server.tls, "Web server TLS should be false");
+        assert_eq!(
+            web_server.upstream.servers,
+            vec!["127.0.0.1:3003", "127.0.0.1:3004"],
+            "Web upstream servers should match"
+        );
+
+        let api_server = resolved.servers.get("api.acme.com").unwrap();
+        assert!(api_server.tls, "API server TLS should be true");
+        assert_eq!(
+            api_server.upstream.servers,
+            vec!["127.0.0.1:3001", "127.0.0.1:3002"],
+            "API upstream servers should match"
+        );
 
         Ok(())
     }
