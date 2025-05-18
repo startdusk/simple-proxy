@@ -6,7 +6,7 @@ use pingora::{
     services::Service,
 };
 use tokio::time::interval;
-use tracing::info;
+use tracing::{debug, info};
 
 use super::{HealthService, RouteTable};
 
@@ -31,7 +31,7 @@ impl Service for HealthService {
         loop {
             interval.tick().await;
             for (host, entry) in route_table.iter() {
-                info!("Checking health for host: {}", host);
+                debug!("Checking health for host: {}", host);
 
                 entry.upstream.update().await.ok();
                 entry.upstream.backends().run_health_check(true).await;

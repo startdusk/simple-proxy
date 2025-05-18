@@ -1,5 +1,6 @@
 use std::{ops::Deref, sync::Arc};
 
+use bytes::BytesMut;
 // 为什么不使用dashmap呢？proxy的场景下，route都是固定的，不需要动态增删。读比较多
 // 因为papaya在读多写少的场景下，性能更好。
 use papaya::HashMap;
@@ -25,6 +26,8 @@ pub struct ProxyContext {
     pub(crate) route_entry: Option<RouteEntry>,
     pub(crate) host: String,
     pub(crate) port: u16,
+    pub(crate) resp_content_type: Option<String>,
+    pub(crate) resp_body: Option<BytesMut>,
 }
 
 #[derive(Clone)]
