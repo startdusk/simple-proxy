@@ -11,6 +11,7 @@ init:
 .PHONY: test
 test:
 	@cargo nextest run --all-features --examples
+	@cargo nextest run
 
 .PHONY: release
 release: test

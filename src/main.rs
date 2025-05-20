@@ -23,6 +23,9 @@ fn main() -> anyhow::Result<()> {
         .with(fmt::layer())
         .with(EnvFilter::from_default_env())
         .init();
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .unwrap();
 
     let args = Args::parse();
 

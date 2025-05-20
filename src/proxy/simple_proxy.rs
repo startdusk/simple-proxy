@@ -534,3 +534,123 @@ impl ProxyHttp for SimpleProxy {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::Method;
+    use once_cell::sync::Lazy;
+    use tokio_test::io::Builder;
+
+    static CONFIG: Lazy<ProxyConfigResolved> = Lazy::new(|| {
+        rustls::crypto::aws_lc_rs::default_provider()
+            .install_default()
+            .unwrap();
+        ProxyConfigResolved::load("fixtures/app.yml").unwrap()
+    });
+
+    static BODY_DATA: & [u8] = br#"[{"created_at":"2025-05-18T13:27:08.077004Z","email":"test@example.com","id":13,"name":"test_user1","updated_at":"2025-05-18T13:27:08.077004Z","x-simple-proxy":"v0.1"},{"created_at":"2025-05-18T13:26:24.107614Z","email":"test@example.com","id":8,"name":"test_user2","updated_at":"2025-05-18T13:26:24.107614Z","x-simple-proxy":"v0.1"}]"#;
+
+    async fn create_mock_session() -> Session {
+        // request
+        let req = b"GET /users HTTP/1.1\r\nHost: api.acme.com\r\n\r\n";
+        // response - 使用与测试代码相同的body数据
+        let mock_io = Builder::new().read(req).write(&[]).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        session
+    }
+
+    #[tokio::test]
+    async fn test_simple_proxy() {
+        let proxy = SimpleProxy::try_new(CONFIG.clone()).unwrap();
+        let mut session = create_mock_session().await;
+        let mut ctx = proxy.new_ctx();
+        proxy
+            .early_request_filter(&mut session, &mut ctx)
+            .await
+            .unwrap();
+        proxy.request_filter(&mut session, &mut ctx).await.unwrap();
+        assert_eq!(ctx.host, "api.acme.com");
+        assert_eq!(ctx.port, 80);
+        assert!(ctx.route_entry.as_ref().unwrap().tls);
+        let pass = proxy
+            .proxy_upstream_filter(&mut session, &mut ctx)
+            .await
+            .unwrap();
+        assert!(pass);
+
+        let peer = proxy.upstream_peer(&mut session, &mut ctx).await.unwrap();
+        // peer could be 127.0.0.1:3001 or 127.0.0.1:3002
+        let peer_str = peer._address.to_string();
+        assert!(peer_str == "127.0.0.1:3001" || peer_str == "127.0.0.1:3002");
+        assert_eq!(peer.scheme.to_string(), "HTTPS");
+        assert_eq!(peer.sni(), "api.acme.com");
+
+        let mut req_header = RequestHeader::build(Method::GET, b"/users", None).unwrap();
+        req_header.insert_header("host", "api.acme.com").unwrap();
+        proxy
+            .upstream_request_filter(&mut session, &mut req_header, &mut ctx)
+            .await
+            .unwrap();
+        proxy
+            .request_body_filter(&mut session, &mut None, true, &mut ctx)
+            .await
+            .unwrap();
+
+        // response processing
+        let mut res_header = ResponseHeader::build(StatusCode::OK, None).unwrap();
+        res_header
+            .insert_header("Content-Type", "application/json")
+            .unwrap();
+        res_header
+            .insert_header("x-server-info", "127.0.0.1:3001")
+            .unwrap();
+        // 重要：移除Content-Length，因为我们使用了chunked编码
+        res_header.remove_header(&header::CONTENT_LENGTH);
+        res_header
+            .insert_header("Transfer-Encoding", "chunked")
+            .unwrap();
+        res_header.insert_header("connection", "close").unwrap();
+        res_header
+            .insert_header("date", "Sat, 17 May 2025 18:27:43 GMT")
+            .unwrap();
+        proxy.upstream_response_filter(&mut session, &mut res_header, &mut ctx);
+        proxy
+            .response_filter(&mut session, &mut res_header, &mut ctx)
+            .await
+            .unwrap();
+        let mut body = Some(Bytes::from_static(BODY_DATA));
+        proxy.upstream_response_body_filter(&mut session, &mut body, true, &mut ctx);
+
+        // 验证响应头
+        assert_eq!(res_header.status, StatusCode::OK);
+        assert_eq!(res_header.version, http::Version::HTTP_11);
+
+        // 验证必须存在的头
+        assert!(res_header.headers.contains_key("content-type"));
+        assert!(res_header.headers.contains_key("x-server-info"));
+        assert!(res_header.headers.contains_key("transfer-encoding"));
+        assert!(res_header.headers.contains_key("connection"));
+        assert!(res_header.headers.contains_key("date"));
+
+        // 验证代理添加的头
+        assert!(res_header.headers.contains_key("x-simple-proxy"));
+        assert!(res_header.headers.contains_key("server"));
+
+        // 验证具体值
+        assert_eq!(
+            res_header.headers.get("content-type").unwrap(),
+            "application/json"
+        );
+        assert_eq!(res_header.headers.get("x-simple-proxy").unwrap(), "v0.1");
+        assert_eq!(res_header.headers.get("server").unwrap(), "SimpleProxy/1.0");
+
+        // 验证Content-Length不存在
+        assert!(!res_header.headers.contains_key("content-length"));
+        proxy
+            .response_body_filter(&mut session, &mut body, true, &mut ctx)
+            .unwrap();
+        assert_eq!(body.unwrap(), Bytes::from_static(BODY_DATA));
+    }
+}

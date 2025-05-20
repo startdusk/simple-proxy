@@ -22,15 +22,18 @@ clap = { version = "4.5.37", features = ["derive"] }
 bytes = "1.10.1"
 pingora-cache = "0.4.0"
 papaya = { version = "0.2.1", features = ["serde"] }
+rustls = "0.23.27"
 
 
 
 [dev-dependencies]
+once_cell = "1.21.3"
 chrono = { version = "0.4", features = ["serde"] }
 dashmap = "6.1"
 argon2 = "0.5"
 tower-http = { version = "0.6.2", features = ["trace"] }
 axum-server = { version = "0.7.2", features = ["tls-rustls"] }
+tokio-test = "0.4.4"
 
 # 20250419: 由于pingora 0.4.0没有锁sfv版本，导致使用pingora的时候sfv自动更新，导致代码pingora依赖的sfv版本和cargo.toml中的sfv版本不一致，导致编译失败
 # 解决方法：在cargo.toml中添加sfv的版本，并且使用git的方式引入sfv，这样就可以保证sfv的版本一致了, 并在项目中删除Cargo.lock文件, 然后重新构建项目
